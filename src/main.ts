@@ -2,21 +2,10 @@ import { MCPBedrockIntegration } from "./integration/MCPBedrockIntegration";
 import readline from "readline/promises";
 
 async function main() {
-  const integration = new MCPBedrockIntegration("us-east-1");
+  const integration = new MCPBedrockIntegration();
+  await integration.initialize();
 
   try {
-    await integration.initializeMCP(
-      "/opt/homebrew/bin/bun",
-      [
-        "run",
-        "/Users/martinmacecek/Documents/projects/weather-mcp-server/build/main.js",
-      ],
-      {
-        APP_NAME: "weather-mcp-server",
-        APP_EMAIL: "katjes733@gmx.net",
-      },
-    );
-
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -41,4 +30,19 @@ async function main() {
   }
 }
 
-main();
+export async function runServer() {
+  try {
+    await main();
+  } catch (error) {
+    console.error("Fatal error while running server:", error);
+    process.exit(1);
+  }
+}
+
+export function startServer(isMain = import.meta.main) {
+  if (isMain) {
+    runServer();
+  }
+}
+
+startServer();

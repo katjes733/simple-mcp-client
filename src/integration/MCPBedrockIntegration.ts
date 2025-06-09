@@ -1,111 +1,82 @@
 import {
   BedrockRuntimeClient,
-  ContentBlock,
-  ConversationRole,
   ConverseCommand,
 } from "@aws-sdk/client-bedrock-runtime";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { LimitedSizeArray } from "~/util/LimitedSizeArray";
 import { transformMCPToolsToBedrock } from "~/util/transformMCPToolToBedrock";
+import configs from "~/../server-config.json" with { type: "json" };
+import type { Message, ServerConfig } from "~/types/SimpleMcpClientTypes";
+import { MCPClient } from "~/util/MCPClient";
+import type { Tool } from "@aws-sdk/client-bedrock-runtime";
 
 const DEFAULT_MODEL_ID =
   "arn:aws:bedrock:us-east-1:275279264324:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0";
+const DEFAULT_REGION = "us-east-1";
 
-type Message = {
-  role: ConversationRole;
-  content: ContentBlock[];
-};
 export class MCPBedrockIntegration {
   private bedrockClient: BedrockRuntimeClient;
-  private mcpClient: Client | undefined = undefined;
+  private defaultModelId: string;
+  // private mcpClient: Client | undefined = undefined;
   private messages = new LimitedSizeArray<Message>(1024 * 1024);
 
-  constructor(region: string = "us-east-1") {
+  private mcpClients: MCPClient[] = [];
+  private tools: Tool[] = [];
+  private toolsMap: { [name: string]: MCPClient } = {};
+  private servers: { [name: string]: ServerConfig } = configs;
+
+  constructor(
+    {
+      region = DEFAULT_REGION,
+      defaultModelId = DEFAULT_MODEL_ID,
+    }: {
+      region: string;
+      defaultModelId: string;
+    } = { region: DEFAULT_REGION, defaultModelId: DEFAULT_MODEL_ID },
+  ) {
     this.bedrockClient = new BedrockRuntimeClient({ region });
+    this.defaultModelId = defaultModelId;
   }
 
-  async initializeMCP(
-    command: string,
-    args: string[] = [],
-    env?: Record<string, any>,
-  ) {
-    const transport = new StdioClientTransport({
-      command,
-      args,
-      env,
-    });
-
-    this.mcpClient = new Client(
-      {
-        name: "bedrock-mcp-client",
-        version: "1.0.0",
-      },
-      {
-        capabilities: {},
-      },
-    );
-
-    await this.mcpClient.connect(transport);
+  async initialize() {
+    await this.connectToServers();
   }
 
-  async getAvailableTools() {
-    if (!this.mcpClient) {
-      throw new Error("Not initialized.");
-    }
-    const toolsResult = await this.mcpClient.listTools();
-    return transformMCPToolsToBedrock(toolsResult.tools);
-  }
+  async connectToServers() {
+    try {
+      for (const serverName in this.servers) {
+        const mcp = new MCPClient(serverName);
+        const config = this.servers[serverName];
+        await mcp.connectToServer(config);
+        this.mcpClients.push(mcp);
 
-  async converseWithTools(
-    message: string,
-    // modelId: string = "anthropic.claude-sonnet-4-20250514-v1:0",
-    modelId: string = DEFAULT_MODEL_ID,
-  ) {
-    const tools = await this.getAvailableTools();
-
-    const command = new ConverseCommand({
-      modelId,
-      messages: [
-        {
-          role: "user",
-          content: [{ text: message }],
-        },
-      ],
-      toolConfig: {
-        tools,
-      },
-    });
-
-    const response = await this.bedrockClient.send(command);
-
-    // Handle tool calls if present
-    if (response.output?.message?.content) {
-      for (const content of response.output.message.content) {
-        if (content.toolUse?.name) {
-          const toolResult = await this.executeMCPTool(
-            content.toolUse.name,
-            content.toolUse.input,
-          );
-
-          // You can now send the tool result back to Bedrock
-          console.log("Tool result:", toolResult);
-        }
+        const tools = await mcp.getTools();
+        const map: { [name: string]: MCPClient } = {};
+        tools.forEach((t) => (map[t.name] = mcp));
+        this.tools = [...this.tools, ...transformMCPToolsToBedrock(tools)];
+        this.toolsMap = {
+          ...this.toolsMap,
+          ...map,
+        };
+        console.log(
+          `Connected to server ${serverName} with tools: ${tools.map(({ name }) => name)}`,
+        );
       }
+    } catch (e) {
+      console.log("Failed to connect to MCP server: ", e);
+      throw e;
     }
+  }
 
-    return response;
+  async disconnect() {
+    for (const mcp of this.mcpClients) {
+      await mcp.disconnect();
+    }
   }
 
   private async executeMCPTool(toolName: string, input: any) {
     try {
-      if (!this.mcpClient) {
-        throw new Error("Not initialized.");
-      }
-      const result = await this.mcpClient.callTool({
-        name: toolName,
-        arguments: input,
-      });
+      const mcpClient = this.toolsMap[toolName];
+      const result = await mcpClient.callTool(toolName, input);
       return result;
     } catch (error) {
       console.error(`Error executing MCP tool ${toolName}:`, error);
@@ -113,18 +84,10 @@ export class MCPBedrockIntegration {
     }
   }
 
-  async disconnect() {
-    if (this.mcpClient) {
-      await this.mcpClient.close();
-    }
-  }
-
   async handleToolConversation(
     userMessage: string,
-    modelId: string = DEFAULT_MODEL_ID,
+    modelId: string = this.defaultModelId,
   ) {
-    const tools = await this.getAvailableTools();
-
     this.messages.push({
       role: "user" as const,
       content: [{ text: userMessage }],
@@ -134,7 +97,7 @@ export class MCPBedrockIntegration {
       const command = new ConverseCommand({
         modelId,
         messages: this.messages.all(),
-        toolConfig: { tools },
+        toolConfig: { tools: this.tools },
       });
 
       const response = await this.bedrockClient.send(command);
@@ -175,6 +138,7 @@ export class MCPBedrockIntegration {
               toolUse.toolUse.name,
               toolUse.toolUse.input,
             );
+            console.log(result);
             try {
               console.log("result:", JSON.parse(result.content[0].text));
             } catch {

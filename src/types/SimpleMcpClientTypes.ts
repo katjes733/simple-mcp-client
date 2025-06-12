@@ -4,8 +4,9 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 
 export type ServerConfig = {
-  command: string;
-  args: string[];
+  serverUrl?: string;
+  command?: string;
+  args?: string[];
   env?: Record<string, any>;
 };
 

@@ -30,7 +30,7 @@ async function main() {
   }
 }
 
-export async function runServer() {
+export async function runClient() {
   try {
     await main();
   } catch (error) {
@@ -39,10 +39,10 @@ export async function runServer() {
   }
 }
 
-export function startServer(isMain = import.meta.main) {
+export function startClient(isMain = import.meta.main) {
   if (isMain) {
-    runServer();
+    runClient();
   }
 }
 
-startServer();
+startClient();

@@ -22,7 +22,9 @@ export class MCPBedrockIntegration {
   private mcpClients: MCPClient[] = [];
   private tools: Tool[] = [];
   private toolsMap: { [name: string]: MCPClient } = {};
-  private servers: { [name: string]: ServerConfig } = configs;
+  private servers: { [name: string]: ServerConfig } = configs as {
+    [name: string]: ServerConfig;
+  };
 
   constructor(
     {
@@ -62,7 +64,7 @@ export class MCPBedrockIntegration {
         );
       }
     } catch (e) {
-      console.log("Failed to connect to MCP server: ", e);
+      console.error("Failed to connect to MCP server: ", e);
       throw e;
     }
   }
@@ -132,17 +134,17 @@ export class MCPBedrockIntegration {
             if (!toolUse.toolUse.name) {
               throw new Error("Tool name is undefined.");
             }
-            console.log("input:", toolUse.toolUse.input);
-            console.log("name:", toolUse.toolUse.name);
+            // console.log("input:", toolUse.toolUse.input);
+            // console.log("name:", toolUse.toolUse.name);
             const result = await this.executeMCPTool(
               toolUse.toolUse.name,
               toolUse.toolUse.input,
             );
-            console.log(result);
+            // console.log(result);
             try {
-              console.log("result:", JSON.parse(result.content[0].text));
+              console.log("Result:", JSON.parse(result.content[0].text));
             } catch {
-              console.log("result:", result.content[0].text);
+              console.log("Result:", result.content[0].text);
             }
 
             toolResults.push({

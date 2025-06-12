@@ -1,13 +1,19 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Result, ServerConfig } from "~/types/SimpleMcpClientTypes";
 
 export class MCPClient {
   private client: Client;
-  private transport: StdioClientTransport | null = null;
+  private serverName: string;
+  private transport:
+    | StdioClientTransport
+    | StreamableHTTPClientTransport
+    | null = null;
 
   constructor(serverName: string) {
+    this.serverName = serverName;
     this.client = new Client({
       name: `mcp-client-for-${serverName}`,
       version: "1.0.0",
@@ -15,7 +21,11 @@ export class MCPClient {
   }
 
   async connectToServer(serverConfig: ServerConfig) {
-    try {
+    if (serverConfig.serverUrl) {
+      this.transport = new StreamableHTTPClientTransport(
+        new URL(serverConfig.serverUrl),
+      );
+    } else if (serverConfig.command) {
       this.transport = new StdioClientTransport({
         command:
           serverConfig.command === "bun"
@@ -24,11 +34,12 @@ export class MCPClient {
         args: serverConfig.args,
         env: serverConfig.env,
       });
-      this.client.connect(this.transport);
-    } catch (e) {
-      console.error("Failed to connect to MCP server: ", e);
-      throw e;
+    } else {
+      throw new Error(
+        `Must specify either a command (stdio) or a serverUrl (streaming HTTP) for server ${this.serverName}`,
+      );
     }
+    await this.client.connect(this.transport);
   }
 
   async getTools(): Promise<Tool[]> {

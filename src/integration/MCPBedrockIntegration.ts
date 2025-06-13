@@ -16,7 +16,6 @@ const DEFAULT_REGION = "us-east-1";
 export class MCPBedrockIntegration {
   private bedrockClient: BedrockRuntimeClient;
   private defaultModelId: string;
-  // private mcpClient: Client | undefined = undefined;
   private messages = new LimitedSizeArray<Message>(1024 * 1024);
 
   private mcpClients: MCPClient[] = [];
@@ -59,12 +58,12 @@ export class MCPBedrockIntegration {
           ...this.toolsMap,
           ...map,
         };
-        console.log(
+        typewriter.log(
           `Connected to server ${serverName} with tools: ${tools.map(({ name }) => name)}`,
         );
       }
     } catch (e) {
-      console.error("Failed to connect to MCP server: ", e);
+      typewriter.error("Failed to connect to MCP server: ", e);
       throw e;
     }
   }
@@ -81,7 +80,7 @@ export class MCPBedrockIntegration {
       const result = await mcpClient.callTool(toolName, input);
       return result;
     } catch (error) {
-      console.error(`Error executing MCP tool ${toolName}:`, error);
+      typewriter.error(`Error executing MCP tool ${toolName}:`, error);
       throw error;
     }
   }
@@ -113,9 +112,9 @@ export class MCPBedrockIntegration {
       });
 
       if (message.content && message.content.length > 0) {
-        console.log(message.content[0].text);
+        typewriter.type(message.content[0].text);
       } else {
-        console.log("Thinking...");
+        typewriter.type("Thinking...");
       }
 
       // Check if model wants to use tools
@@ -134,17 +133,17 @@ export class MCPBedrockIntegration {
             if (!toolUse.toolUse.name) {
               throw new Error("Tool name is undefined.");
             }
-            // console.log("input:", toolUse.toolUse.input);
-            // console.log("name:", toolUse.toolUse.name);
+            // typewriter.log("input:", toolUse.toolUse.input);
+            // typewriter.log("name:", toolUse.toolUse.name);
             const result = await this.executeMCPTool(
               toolUse.toolUse.name,
               toolUse.toolUse.input,
             );
-            // console.log(result);
+            // typewriter.log(result);
             try {
-              console.log("Result:", JSON.parse(result.content[0].text));
+              typewriter.log("Result:", JSON.parse(result.content[0].text));
             } catch {
-              console.log("Result:", result.content[0].text);
+              typewriter.log("Result:", result.content[0].text);
             }
 
             toolResults.push({
@@ -176,7 +175,7 @@ export class MCPBedrockIntegration {
       });
     }
 
-    console.log("Memory size:", this.messages.getTotalSize());
+    typewriter.log("Memory size:", this.messages.getTotalSize());
 
     return this.messages.all();
   }

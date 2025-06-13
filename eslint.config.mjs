@@ -20,6 +20,7 @@ export default defineConfig([
         module: true,
         require: true,
         Bun: true,
+        typewriter: "readonly",
       },
     },
     plugins: {

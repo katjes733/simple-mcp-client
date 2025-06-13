@@ -12,19 +12,20 @@ async function main() {
     });
 
     try {
-      console.log("\nMCP Client Started!");
-      console.log("Type your message.");
+      typewriter.log("\nMCP Client Started!");
+      typewriter.log("Type your message.");
 
       while (true) {
+        await typewriter.done();
         const message = await rl.question("\nQuery: ");
-        console.log("\n");
+        typewriter.log("\n");
         await integration.handleToolConversation(message);
       }
     } finally {
       rl.close();
     }
   } catch (error) {
-    console.error("Error:", error);
+    typewriter.error("Error:", error);
   } finally {
     await integration.disconnect();
   }
@@ -34,7 +35,7 @@ export async function runClient() {
   try {
     await main();
   } catch (error) {
-    console.error("Fatal error while running server:", error);
+    typewriter.error("Fatal error while running server:", error);
     process.exit(1);
   }
 }

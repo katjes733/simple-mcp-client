@@ -27,7 +27,7 @@ async function main() {
         }
         await typewriter.done();
         const elapsedMs = performance.now() - startTime;
-        typewriter.log("Total ⏱️ in ms:", Number(elapsedMs.toFixed(0)));
+        typewriter.log("Total ⏱️  in ms:", Number(elapsedMs.toFixed(0)));
       }
     } finally {
       rl.close();

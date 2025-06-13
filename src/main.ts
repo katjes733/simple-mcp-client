@@ -18,8 +18,16 @@ async function main() {
       while (true) {
         await typewriter.done();
         const message = await rl.question("\nQuery: ");
+        const startTime = performance.now();
         typewriter.log("\n");
-        await integration.handleToolConversation(message);
+        if (process.env.STREAMING === "true") {
+          await integration.handleToolConversationStream(message);
+        } else {
+          await integration.handleToolConversation(message);
+        }
+        await typewriter.done();
+        const elapsedMs = performance.now() - startTime;
+        typewriter.log("Total ⏱️ in ms:", Number(elapsedMs.toFixed(0)));
       }
     } finally {
       rl.close();

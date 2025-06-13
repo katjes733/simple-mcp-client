@@ -34,7 +34,7 @@ export class Typewriter {
       opts = args.pop() as TypeOpts;
     }
 
-    const text = this.fmt(args) + "\n";
+    const text = this.fmt(args);
     const delay = opts?.delay ?? this.defaultDelay;
 
     this.typingQ.push({ text, delay });
@@ -67,19 +67,29 @@ export class Typewriter {
   }
 
   private async pump() {
+    if (this.busy) return; // guard re-entrance
     this.busy = true;
-    while (this.typingQ.length) {
-      const { text, delay } = this.typingQ.shift()!;
-      for (const ch of text) {
-        process.stdout.write(ch);
-        await wait(delay);
+
+    while (true) {
+      /* 1 ─ drain every type chunk in order */
+      while (this.typingQ.length) {
+        const { text, delay } = this.typingQ.shift()!;
+        for (const ch of text) {
+          process.stdout.write(ch);
+          await wait(delay);
+        }
       }
 
+      /* 2 ─ queue empty → flush logs & errors once */
       while (this.pending.length) {
         const { stream, text } = this.pending.shift()!;
         stream.write(text);
       }
+
+      /* 3 ─ done?  quit;  else loop back and type more */
+      if (this.typingQ.length === 0) break;
     }
+
     this.busy = false;
   }
 }

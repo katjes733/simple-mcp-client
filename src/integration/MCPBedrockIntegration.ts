@@ -1,13 +1,14 @@
 import {
   BedrockRuntimeClient,
   ConverseCommand,
+  ConverseStreamCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 import { LimitedSizeArray } from "~/util/LimitedSizeArray";
 import { transformMCPToolsToBedrock } from "~/util/transformMCPToolToBedrock";
 import configs from "~/../server-config.json" with { type: "json" };
 import type { Message, ServerConfig } from "~/types/SimpleMcpClientTypes";
 import { MCPClient } from "~/util/MCPClient";
-import type { Tool } from "@aws-sdk/client-bedrock-runtime";
+import type { Tool, ToolUseBlock } from "@aws-sdk/client-bedrock-runtime";
 
 const DEFAULT_MODEL_ID =
   "arn:aws:bedrock:us-east-1:275279264324:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0";
@@ -112,15 +113,25 @@ export class MCPBedrockIntegration {
       });
 
       if (message.content && message.content.length > 0) {
-        typewriter.type(message.content[0].text);
+        typewriter.type(message.content[0].text + "\n");
       } else {
-        typewriter.type("Thinking...");
+        typewriter.type("Thinking...\n");
       }
 
       // Check if model wants to use tools
       const toolUses = message.content?.filter((c) => c.toolUse) || [];
+      toolUses.forEach((toolUse) =>
+        typewriter.log(
+          `Latency for tool '${toolUse.toolUse?.name || "N/A"}' in ms:`,
+          response.metrics?.latencyMs || "N/A",
+        ),
+      );
 
       if (toolUses.length === 0) {
+        typewriter.log(
+          "Latency for final response in ms:",
+          response.metrics?.latencyMs || "N/A",
+        );
         // No more tool calls, conversation is complete
         break;
       }
@@ -133,13 +144,10 @@ export class MCPBedrockIntegration {
             if (!toolUse.toolUse.name) {
               throw new Error("Tool name is undefined.");
             }
-            // typewriter.log("input:", toolUse.toolUse.input);
-            // typewriter.log("name:", toolUse.toolUse.name);
             const result = await this.executeMCPTool(
               toolUse.toolUse.name,
               toolUse.toolUse.input,
             );
-            // typewriter.log(result);
             try {
               typewriter.log("Result:", JSON.parse(result.content[0].text));
             } catch {
@@ -175,7 +183,139 @@ export class MCPBedrockIntegration {
       });
     }
 
-    typewriter.log("Memory size:", this.messages.getTotalSize());
+    typewriter.log("Memory size in bytes:", this.messages.getTotalSize());
+
+    return this.messages.all();
+  }
+
+  async handleToolConversationStream(
+    userMessage: string,
+    modelId: string = this.defaultModelId,
+  ) {
+    this.messages.push({
+      role: "user" as const,
+      content: [{ text: userMessage }],
+    });
+
+    while (true) {
+      const command = new ConverseStreamCommand({
+        modelId,
+        messages: this.messages.all(),
+        toolConfig: { tools: this.tools },
+      });
+
+      const response = await this.bedrockClient.send(command);
+      if (!response.stream) break;
+      let toolUse: ToolUseBlock = { toolUseId: "", name: "", input: "" };
+      let text = "";
+      for await (const chunk of response.stream) {
+        if (chunk.contentBlockStart) {
+          if (chunk.contentBlockStart?.start?.toolUse) {
+            toolUse = {
+              ...toolUse,
+              ...chunk.contentBlockStart?.start?.toolUse,
+            };
+          }
+        }
+        if (chunk.contentBlockDelta) {
+          if (chunk.contentBlockDelta.delta?.text) {
+            typewriter.type(chunk.contentBlockDelta.delta.text);
+            text += chunk.contentBlockDelta.delta.text;
+          }
+          if (chunk.contentBlockDelta.delta?.toolUse) {
+            toolUse.input =
+              (toolUse.input || "") +
+              (chunk.contentBlockDelta.delta?.toolUse?.input || "");
+          }
+        }
+        if (chunk.contentBlockStop) {
+          if (chunk.contentBlockStop.contentBlockIndex === 0) {
+            typewriter.type("\n");
+          }
+        }
+        if (chunk.metadata) {
+          const latency = chunk.metadata.metrics?.latencyMs || "N/A";
+          if (toolUse.name) {
+            typewriter.log(
+              `Latency for tool '${toolUse.name}' in ms:`,
+              latency,
+            );
+          } else {
+            typewriter.log(`Latency for final response in ms:`, latency);
+          }
+        }
+      }
+
+      if (!toolUse || !toolUse.toolUseId || !toolUse.name || !toolUse.input) {
+        break;
+      }
+
+      let parsedInput: any;
+      if (typeof toolUse.input === "string") {
+        parsedInput = toolUse.input ? JSON.parse(toolUse.input) : {};
+      } else {
+        parsedInput = toolUse.input ?? {};
+      }
+
+      this.messages.push({
+        role: "assistant" as const,
+        content: [
+          { text: String(text) },
+          {
+            toolUse: {
+              toolUseId: toolUse.toolUseId,
+              name: toolUse.name,
+              input: parsedInput,
+            },
+          },
+        ],
+      });
+
+      const toolResults = [];
+      try {
+        if (!toolUse.name) {
+          throw new Error("Tool name is undefined.");
+        }
+        let parsedInput: any;
+        if (typeof toolUse.input === "string") {
+          parsedInput = toolUse.input ? JSON.parse(toolUse.input) : {};
+        } else {
+          parsedInput = toolUse.input ?? {};
+        }
+        const result = await this.executeMCPTool(toolUse.name, parsedInput);
+        try {
+          typewriter.log("Result:", JSON.parse(result.content[0].text));
+        } catch {
+          typewriter.log("Result:", result.content[0].text);
+        }
+        toolResults.push({
+          toolResult: {
+            toolUseId: toolUse.toolUseId,
+            content: [{ text: JSON.stringify(result) }],
+          },
+        });
+      } catch (error) {
+        toolResults.push({
+          toolResult: {
+            toolUseId: toolUse.toolUseId,
+            content: [
+              {
+                text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+              },
+            ],
+            status: "error" as const,
+          },
+        });
+      }
+
+      // Add tool results to conversation
+      this.messages.push({
+        role: "user" as const,
+        content: toolResults,
+      });
+    }
+
+    typewriter.log("Memory size in bytes:", this.messages.getTotalSize());
 
     return this.messages.all();
   }

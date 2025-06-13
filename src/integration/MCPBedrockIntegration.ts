@@ -38,10 +38,9 @@ export class MCPBedrockIntegration {
 
   async initialize() {
     try {
-      const configsModule = await import("~/../server-config.json", {
-        assert: { type: "json" },
-      });
-      this.servers = configsModule.default as { [name: string]: ServerConfig };
+      const jsonText = await Bun.file("./server-config.json").text();
+      const configs = JSON.parse(jsonText);
+      this.servers = configs as { [name: string]: ServerConfig };
     } catch (e) {
       typewriter.error("Failed to load server-config.json:", e);
       throw new Error("server-config.json not found or invalid");

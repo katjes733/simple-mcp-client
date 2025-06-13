@@ -13,7 +13,6 @@ const inspectOpts = {
 };
 
 export class Typewriter {
-  /* queue now stores text + delay per entry */
   private typingQ: { text: string; delay: number }[] = [];
   private pending: { stream: WriteStream; text: string }[] = [];
   private busy = false;
@@ -23,13 +22,9 @@ export class Typewriter {
     this.defaultDelay = defaultDelay;
   }
 
-  /*──────────────────────────────  PUBLIC  ─────────────────────────────*/
-
-  /** Retro, character-by-character.  Pass `{ delay }` to override speed. */
   type(...args: any[]) {
     let opts: TypeOpts | undefined;
 
-    /* last arg may be an options object with a `delay` field */
     if (
       args.length &&
       typeof args[args.length - 1] === "object" &&
@@ -46,12 +41,10 @@ export class Typewriter {
     if (!this.busy) this.pump();
   }
 
-  /** Standard log (flushes after typing). */
   log(...a: any[]) {
     this.enqueue(process.stdout, a);
   }
 
-  /** Standard error (flushes after typing). */
   error(...a: any[]) {
     this.enqueue(process.stderr, a);
   }
@@ -62,8 +55,6 @@ export class Typewriter {
   async done() {
     while (this.isBusy()) await wait(15);
   }
-
-  /*────────────────────────────── INTERNALS ───────────────────────────*/
 
   private fmt(a: any[]) {
     return formatWithOptions(inspectOpts, ...a);
@@ -83,7 +74,7 @@ export class Typewriter {
         process.stdout.write(ch);
         await wait(delay);
       }
-      /* flush any buffered log/error lines */
+
       while (this.pending.length) {
         const { stream, text } = this.pending.shift()!;
         stream.write(text);
@@ -93,7 +84,6 @@ export class Typewriter {
   }
 }
 
-/* small helper */
 function wait(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
 }

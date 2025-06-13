@@ -5,7 +5,6 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 import { LimitedSizeArray } from "~/util/LimitedSizeArray";
 import { transformMCPToolsToBedrock } from "~/util/transformMCPToolToBedrock";
-import configs from "~/../server-config.json" with { type: "json" };
 import type { Message, ServerConfig } from "~/types/SimpleMcpClientTypes";
 import { MCPClient } from "~/util/MCPClient";
 import type { Tool, ToolUseBlock } from "@aws-sdk/client-bedrock-runtime";
@@ -22,9 +21,7 @@ export class MCPBedrockIntegration {
   private mcpClients: MCPClient[] = [];
   private tools: Tool[] = [];
   private toolsMap: { [name: string]: MCPClient } = {};
-  private servers: { [name: string]: ServerConfig } = configs as {
-    [name: string]: ServerConfig;
-  };
+  private servers: { [name: string]: ServerConfig } = {};
 
   constructor(
     {
@@ -40,6 +37,15 @@ export class MCPBedrockIntegration {
   }
 
   async initialize() {
+    try {
+      const configsModule = await import("~/../server-config.json", {
+        assert: { type: "json" },
+      });
+      this.servers = configsModule.default as { [name: string]: ServerConfig };
+    } catch (e) {
+      typewriter.error("Failed to load server-config.json:", e);
+      throw new Error("server-config.json not found or invalid");
+    }
     await this.connectToServers();
   }
 

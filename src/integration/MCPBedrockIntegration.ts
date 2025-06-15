@@ -16,6 +16,7 @@ const DEFAULT_REGION = "us-east-1";
 export class MCPBedrockIntegration {
   private bedrockClient: BedrockRuntimeClient;
   private defaultModelId: string;
+  private typeReasoning: string | undefined;
   private messages = new LimitedSizeArray<Message>(1024 * 1024);
 
   private mcpClients: MCPClient[] = [];
@@ -25,15 +26,25 @@ export class MCPBedrockIntegration {
 
   constructor(
     {
+      profile = process.env.AWS_PROFILE,
       region = DEFAULT_REGION,
       defaultModelId = DEFAULT_MODEL_ID,
+      typeReasoning = process.env.TYPE_REASONING,
     }: {
+      profile: string | undefined;
       region: string;
       defaultModelId: string;
-    } = { region: DEFAULT_REGION, defaultModelId: DEFAULT_MODEL_ID },
+      typeReasoning: string | undefined;
+    } = {
+      profile: process.env.AWS_PROFILE,
+      region: DEFAULT_REGION,
+      defaultModelId: DEFAULT_MODEL_ID,
+      typeReasoning: process.env.TYPE_REASONING,
+    },
   ) {
-    this.bedrockClient = new BedrockRuntimeClient({ region });
+    this.bedrockClient = new BedrockRuntimeClient({ region, profile });
     this.defaultModelId = defaultModelId;
+    this.typeReasoning = typeReasoning;
   }
 
   async initialize() {
@@ -101,6 +112,7 @@ export class MCPBedrockIntegration {
     });
 
     while (true) {
+      const startTime = performance.now();
       const command = new ConverseCommand({
         modelId,
         messages: this.messages.all(),
@@ -117,35 +129,45 @@ export class MCPBedrockIntegration {
         content: message.content || [],
       });
 
-      if (message.content && message.content.length > 0) {
-        typewriter.type(message.content[0].text + "\n");
-      } else {
-        typewriter.type("Thinking...\n");
-      }
-
       // Check if model wants to use tools
       const toolUses = message.content?.filter((c) => c.toolUse) || [];
-      toolUses.forEach((toolUse) =>
-        typewriter.log(
-          `Latency for tool '${toolUse.toolUse?.name || "N/A"}' in ms:`,
-          response.metrics?.latencyMs || "N/A",
-        ),
-      );
 
       if (toolUses.length === 0) {
         typewriter.log(
           "Latency for final response in ms:",
           response.metrics?.latencyMs || "N/A",
         );
+        if (message.content && message.content.length > 0) {
+          typewriter.type(message.content[0].text + "\n");
+        }
         // No more tool calls, conversation is complete
         break;
       }
 
-      // Execute each tool call
+      // toolUses.forEach((toolUse) =>
+      //   typewriter.log(
+      //     `Latency for tool '${toolUse.toolUse?.name || "N/A"}' in ms:`,
+      //     response.metrics?.latencyMs || "N/A",
+      //   ),
+      // );
+      typewriter.log(
+        "Latency for tool choice in ms:",
+        Number((performance.now() - startTime).toFixed(0)),
+      );
+
+      if (
+        this.typeReasoning === "true" &&
+        message.content &&
+        message.content.length > 0
+      ) {
+        typewriter.type(message.content[0].text + "\n");
+      }
+
       const toolResults = [];
       for (const toolUse of toolUses) {
         if (toolUse.toolUse) {
           try {
+            const toolStartTime = performance.now();
             if (!toolUse.toolUse.name) {
               throw new Error("Tool name is undefined.");
             }
@@ -165,6 +187,10 @@ export class MCPBedrockIntegration {
                 content: [{ text: JSON.stringify(result) }],
               },
             });
+            typewriter.log(
+              `Latency for tool invocation '${toolUse.toolUse.name || "N/A"}' in ms:`,
+              Number((performance.now() - toolStartTime).toFixed(0)),
+            );
           } catch (error) {
             toolResults.push({
               toolResult: {

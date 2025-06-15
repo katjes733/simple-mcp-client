@@ -1,5 +1,8 @@
 import OpenAI from "openai";
-import type { ChatCompletionTool } from "openai/resources/chat/completions";
+import type {
+  ChatCompletionTool,
+  ChatCompletionMessageParam,
+} from "openai/resources/chat/completions";
 import type { ServerConfig } from "~/types/SimpleMcpClientTypes";
 import { LimitedSizeArray } from "~/util/LimitedSizeArray";
 import { MCPClient } from "~/util/MCPClient";
@@ -10,8 +13,10 @@ const DEFAULT_MODEL_ID = "gpt-4o";
 export class MCPOpenAiIntegration {
   private openai: OpenAI;
   private defaultModelId: string;
-  // private messages = new LimitedSizeArray<ResponseInputItem>(1024 * 1024);
-  private messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+  private typeReasoning: string | undefined;
+  private messages = new LimitedSizeArray<ChatCompletionMessageParam>(
+    1024 * 1024,
+  );
 
   private mcpClients: MCPClient[] = [];
   private tools: ChatCompletionTool[] = [];
@@ -22,16 +27,20 @@ export class MCPOpenAiIntegration {
     {
       openaiApiKey = process.env.OPENAI_API_KEY,
       defaultModelId = DEFAULT_MODEL_ID,
+      typeReasoning = process.env.TYPE_REASONING,
     }: {
       openaiApiKey: string | undefined;
       defaultModelId: string;
+      typeReasoning: string | undefined;
     } = {
       openaiApiKey: process.env.OPENAI_API_KEY,
       defaultModelId: DEFAULT_MODEL_ID,
+      typeReasoning: process.env.TYPE_REASONING,
     },
   ) {
     this.openai = new OpenAI({ apiKey: openaiApiKey });
     this.defaultModelId = defaultModelId;
+    this.typeReasoning = typeReasoning;
   }
 
   async initialize() {
@@ -113,31 +122,30 @@ export class MCPOpenAiIntegration {
       const startTime = performance.now();
       const completion = await this.openai.chat.completions.create({
         model: modelId,
-        messages: this.messages,
+        messages: this.messages.all(),
         tools: this.tools,
         tool_choice: "auto",
       });
 
       const msg = completion.choices[0].message;
 
+      this.messages.push(msg);
       if (!msg.tool_calls?.length) {
-        typewriter.type(msg.content, "\n");
         typewriter.log(
           "Latency for final response in ms:",
           Number((performance.now() - startTime).toFixed(0)),
         );
-        break;
-      }
-
-      this.messages.push(msg);
-      if (msg.content) {
         typewriter.type(msg.content, "\n");
+        break;
       }
 
       typewriter.log(
         "Latency for tool choice in ms:",
         Number((performance.now() - startTime).toFixed(0)),
       );
+      if (this.typeReasoning === "true" && msg.content) {
+        typewriter.type(msg.content, "\n");
+      }
 
       if (msg.tool_calls) {
         for (const call of msg.tool_calls) {

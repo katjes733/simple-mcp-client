@@ -20,12 +20,17 @@ export function transformMCPToolsToBedrock(mcpTools: MCPTool[]): Tool[] {
 }
 
 export function transformMCPToolToOpenAI(mcpTool: MCPTool): ChatCompletionTool {
+  // Workaround to fix a bug in openai that does not support optional MCP Tool parameters
+  const inputSchema = { ...mcpTool.inputSchema };
+  if (inputSchema.properties) {
+    inputSchema.required = Object.keys(inputSchema.properties);
+  }
   return {
     type: "function",
     function: {
       name: mcpTool.name,
       description: mcpTool.description,
-      parameters: { ...mcpTool.inputSchema, additionalProperties: false },
+      parameters: { ...inputSchema, additionalProperties: false },
       strict: true,
     },
   };

@@ -1,8 +1,16 @@
 import { MCPBedrockIntegration } from "./integration/MCPBedrockIntegration";
 import readline from "readline/promises";
+import { MCPOpenAiIntegration } from "./integration/MCPOpenAiIntegration";
 
 async function main() {
-  const integration = new MCPBedrockIntegration();
+  let integration: MCPBedrockIntegration | MCPOpenAiIntegration;
+  if (process.env.OPENAI_API_KEY) {
+    typewriter.log("Using OpenAI");
+    integration = new MCPOpenAiIntegration();
+  } else {
+    typewriter.log("Using Bedrock");
+    integration = new MCPBedrockIntegration();
+  }
   await integration.initialize();
 
   try {
@@ -43,7 +51,7 @@ export async function runClient() {
   try {
     await main();
   } catch (error) {
-    typewriter.error("Fatal error while running server:", error);
+    typewriter.error("Fatal error while running client:", error);
     process.exit(1);
   }
 }

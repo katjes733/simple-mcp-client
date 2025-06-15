@@ -4,7 +4,7 @@ import {
   ConverseStreamCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 import { LimitedSizeArray } from "~/util/LimitedSizeArray";
-import { transformMCPToolsToBedrock } from "~/util/transformMCPToolToBedrock";
+import { transformMCPToolsToBedrock } from "~/util/transformMCPTool";
 import type { Message, ServerConfig } from "~/types/SimpleMcpClientTypes";
 import { MCPClient } from "~/util/MCPClient";
 import type { Tool, ToolUseBlock } from "@aws-sdk/client-bedrock-runtime";

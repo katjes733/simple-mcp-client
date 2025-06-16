@@ -4,99 +4,32 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionChunk,
 } from "openai/resources/chat/completions";
-import type { ServerConfig } from "~/types/SimpleMcpClientTypes";
-import { CustomStringMap } from "~/util/CustomStringMap";
-import { LimitedSizeArray } from "~/util/LimitedSizeArray";
-import { MCPClient } from "~/util/MCPClient";
 import { transformMCPToolsToOpenAI } from "~/util/transformMCPTool";
+import { AbstractMCPIntegration } from "./AbstractIntegration";
 
 const DEFAULT_MODEL_ID = "gpt-4o";
 
-export class MCPOpenAiIntegration {
+export class MCPOpenAiIntegration extends AbstractMCPIntegration<
+  ChatCompletionTool,
+  ChatCompletionMessageParam
+> {
   private openai: OpenAI;
-  private defaultModelId: string;
-  private typeReasoning: string | undefined;
-  private messages = new LimitedSizeArray<ChatCompletionMessageParam>(
-    1024 * 1024,
-  );
-
-  private mcpClients: MCPClient[] = [];
-  private tools: ChatCompletionTool[] = [];
-  private toolsMap = new CustomStringMap<MCPClient>();
-  private servers: { [name: string]: ServerConfig } = {};
 
   constructor(
     {
       openaiApiKey = process.env.OPENAI_API_KEY,
-      defaultModelId = DEFAULT_MODEL_ID,
-      typeReasoning = process.env.TYPE_REASONING,
     }: {
       openaiApiKey: string | undefined;
-      defaultModelId: string;
-      typeReasoning: string | undefined;
     } = {
       openaiApiKey: process.env.OPENAI_API_KEY,
-      defaultModelId: DEFAULT_MODEL_ID,
-      typeReasoning: process.env.TYPE_REASONING,
     },
   ) {
+    super(DEFAULT_MODEL_ID);
     this.openai = new OpenAI({ apiKey: openaiApiKey });
-    this.defaultModelId = defaultModelId;
-    this.typeReasoning = typeReasoning;
   }
 
-  async initialize() {
-    try {
-      const jsonText = await Bun.file("./server-config.json").text();
-      const configs = JSON.parse(jsonText);
-      this.servers = configs as { [name: string]: ServerConfig };
-    } catch (e) {
-      typewriter.error("Failed to load server-config.json:", e);
-      throw new Error("server-config.json not found or invalid");
-    }
-    await this.connectToServers();
-  }
-
-  async connectToServers() {
-    try {
-      for (const serverName in this.servers) {
-        const mcp = new MCPClient(serverName);
-        const config = this.servers[serverName];
-        await mcp.connectToServer(config);
-        this.mcpClients.push(mcp);
-
-        const tools = await mcp.getTools();
-        const map: { [name: string]: MCPClient } = {};
-        tools.forEach((t) => (map[t.name] = mcp));
-        this.tools = [...this.tools, ...transformMCPToolsToOpenAI(tools)];
-        this.toolsMap.mergeFrom(map);
-        typewriter.log(
-          `Connected to server ${serverName} with tools: ${tools.map(({ name }) => name)}`,
-        );
-      }
-    } catch (e) {
-      typewriter.error("Failed to connect to MCP server: ", e);
-      throw e;
-    }
-  }
-
-  async disconnect() {
-    for (const mcp of this.mcpClients) {
-      await mcp.disconnect();
-    }
-  }
-
-  private async executeMCPTool(toolName: string, input: any) {
-    try {
-      const entry = this.toolsMap.getEntry(toolName);
-      if (!entry) throw new Error(`Cannot find tool '${toolName}.`);
-      const [actualToolName, mcpClient] = entry;
-      const result = await mcpClient.callTool(actualToolName, input);
-      return result;
-    } catch (error) {
-      typewriter.error(`Error executing MCP tool ${toolName}:`, error);
-      throw error;
-    }
+  transformToolsFn(tools: any[]): OpenAI.Chat.Completions.ChatCompletionTool[] {
+    return transformMCPToolsToOpenAI(tools);
   }
 
   async handleToolConversation(
@@ -153,7 +86,7 @@ export class MCPOpenAiIntegration {
           const toolStartTime = performance.now();
           const result = await this.executeMCPTool(
             call.function.name,
-            JSON.parse(call.function.arguments),
+            this.parseJsonSafely(call.function.arguments),
           );
           try {
             typewriter.log("Result:", JSON.parse(result.content[0].text));
@@ -175,6 +108,10 @@ export class MCPOpenAiIntegration {
       }
       // ↻ loop – the LLM now sees fresh tool results and can pick another
     }
+
+    typewriter.log("Memory size in bytes:", this.messages.getTotalSize());
+
+    return this.messages.all();
   }
 
   async handleToolConversationStream(
@@ -191,7 +128,7 @@ export class MCPOpenAiIntegration {
       let toolCallResults: any[] = [];
 
       const startTime = performance.now();
-      // typewriter.log("MESSAGES:", this.messages.all());
+
       const stream = await this.openai.chat.completions.create({
         model: modelId,
         messages: this.messages.all(),
@@ -202,98 +139,42 @@ export class MCPOpenAiIntegration {
 
       for await (const chunk of stream) {
         const delta = chunk.choices[0].delta;
-
-        // Accumulate all delta fields into currentMsg
-        if (Object.keys(currentMsg).length === 0) currentMsg = delta;
-        else {
-          if (delta.role) currentMsg.role += delta.role;
-          if (delta.content) currentMsg.content += delta.content;
-          if (delta.refusal) currentMsg.refusal += delta.refusal;
-          if (delta.tool_calls) {
-            const newToolCalls: typeof delta.tool_calls = [];
-            for (const toolCall of delta.tool_calls) {
-              const currentToolCall = currentMsg.tool_calls?.find(
-                (tc) => tc.index === toolCall.index,
-              );
-              if (currentToolCall) {
-                if (toolCall.id) currentToolCall.id += toolCall.id;
-                if (toolCall.type) currentToolCall.type += toolCall.type;
-                if (toolCall.function?.name) {
-                  if (currentToolCall.function) {
-                    currentToolCall.function.name =
-                      (currentToolCall.function.name || "") +
-                      (toolCall.function?.name || "");
-                  }
-                }
-                if (toolCall.function?.arguments) {
-                  if (currentToolCall.function) {
-                    currentToolCall.function.arguments =
-                      (currentToolCall.function.arguments || "") +
-                      (toolCall.function?.arguments || "");
-                  }
-                }
-                newToolCalls.push(currentToolCall);
-              } else {
-                newToolCalls.push(toolCall);
-              }
-            }
+        if (!Object.keys(currentMsg).length) {
+          if (delta.tool_calls?.length) {
+            typewriter.log(
+              "Latency for tool choice (stream start) in ms:",
+              Number((performance.now() - startTime).toFixed(0)),
+            );
+          } else {
+            typewriter.log(
+              "Latency for final response (stream start) in ms:",
+              Number((performance.now() - startTime).toFixed(0)),
+            );
           }
         }
+        this.accumulate(currentMsg, delta);
 
         // Type any delta content
         if (delta.content) {
           typewriter.type(delta.content);
         }
-
-        // // Accumulate tool calls
-        // if (delta.tool_calls) {
-        //   for (const toolCall of delta.tool_calls) {
-        //     const prev = toolCalls.get(toolCall.index) || {
-        //       id: "",
-        //       type: "",
-        //       name: "",
-        //       arguments: "",
-        //     };
-        //     toolCalls.set(toolCall.index, {
-        //       id: prev.id + (toolCall.id || ""),
-        //       type: prev.type + (toolCall.type || ""),
-        //       name: prev.name + (toolCall.function?.name || ""),
-        //       arguments: prev.arguments + (toolCall.function?.arguments || ""),
-        //     });
-        //   }
-        // }
-
-        // for (const key in delta) {
-        //   if (typeof delta[key] === "string") {
-        //     currentMsg[key] = (currentMsg[key] || "") + delta[key];
-        //   } else if (Array.isArray(delta[key])) {
-        //     // For tool_calls, accumulate as above
-        //     // Already handled above, so skip here
-        //     continue;
-        //   } else if (typeof delta[key] === "object" && delta[key] !== null) {
-        //     // For nested objects, you may want to recursively accumulate
-        //     currentMsg[key] = { ...(currentMsg[key] || {}), ...delta[key] };
-        //   } else {
-        //     currentMsg[key] = delta[key];
-        //   }
-        //}
       }
 
       this.messages.push(currentMsg as unknown as ChatCompletionMessageParam);
 
-      if (!currentMsg.tool_calls?.length) {
+      if (currentMsg.tool_calls?.length) {
+        typewriter.log(
+          "Latency for tool choice (stream end) in ms:",
+          Number((performance.now() - startTime).toFixed(0)),
+        );
+      } else {
         typewriter.type("\n");
         typewriter.log(
-          "Latency for final response in ms:",
+          "Latency for final response (stream end) in ms:",
           Number((performance.now() - startTime).toFixed(0)),
         );
         break;
       }
-
-      // typewriter.log(
-      //   "Latency for streaming response in ms:",
-      //   Number((performance.now() - startTime).toFixed(0)),
-      // );
 
       if (currentMsg.tool_calls) {
         // For each tool call, execute and push tool reply
@@ -311,7 +192,7 @@ export class MCPOpenAiIntegration {
           const toolStartTime = performance.now();
           const result = await this.executeMCPTool(
             toolCall.function.name,
-            JSON.parse(toolCall.function.arguments ?? "{}"),
+            this.parseJsonSafely(toolCall.function.arguments ?? "{}"),
           );
           try {
             typewriter.log("Result:", JSON.parse(result.content[0].text));
@@ -334,10 +215,10 @@ export class MCPOpenAiIntegration {
           toolCallResults.push(toolReply);
         }
       }
-
-      // if (content) {
-      //   this.messages.push({ role: "assistant", content });
-      // }
     }
+
+    typewriter.log("Memory size in bytes:", this.messages.getTotalSize());
+
+    return this.messages.all();
   }
 }

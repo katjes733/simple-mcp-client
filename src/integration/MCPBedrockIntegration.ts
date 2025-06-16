@@ -3,103 +3,40 @@ import {
   ConverseCommand,
   ConverseStreamCommand,
 } from "@aws-sdk/client-bedrock-runtime";
-import { LimitedSizeArray } from "~/util/LimitedSizeArray";
 import { transformMCPToolsToBedrock } from "~/util/transformMCPTool";
-import type { Message, ServerConfig } from "~/types/SimpleMcpClientTypes";
-import { MCPClient } from "~/util/MCPClient";
+import type { Message } from "~/types/SimpleMcpClientTypes";
 import type { Tool, ToolUseBlock } from "@aws-sdk/client-bedrock-runtime";
+import { AbstractMCPIntegration } from "./AbstractIntegration";
 
 const DEFAULT_MODEL_ID =
   "arn:aws:bedrock:us-east-1:275279264324:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0";
+// const DEFAULT_MODEL_ID = "amazon.nova-micro-v1:0";
 const DEFAULT_REGION = "us-east-1";
 
-export class MCPBedrockIntegration {
+export class MCPBedrockIntegration extends AbstractMCPIntegration<
+  Tool,
+  Message
+> {
   private bedrockClient: BedrockRuntimeClient;
-  private defaultModelId: string;
-  private typeReasoning: string | undefined;
-  private messages = new LimitedSizeArray<Message>(1024 * 1024);
-
-  private mcpClients: MCPClient[] = [];
-  private tools: Tool[] = [];
-  private toolsMap: { [name: string]: MCPClient } = {};
-  private servers: { [name: string]: ServerConfig } = {};
 
   constructor(
     {
       profile = process.env.AWS_PROFILE,
       region = DEFAULT_REGION,
-      defaultModelId = DEFAULT_MODEL_ID,
-      typeReasoning = process.env.TYPE_REASONING,
     }: {
       profile: string | undefined;
       region: string;
-      defaultModelId: string;
-      typeReasoning: string | undefined;
     } = {
       profile: process.env.AWS_PROFILE,
       region: DEFAULT_REGION,
-      defaultModelId: DEFAULT_MODEL_ID,
-      typeReasoning: process.env.TYPE_REASONING,
     },
   ) {
+    super(DEFAULT_MODEL_ID);
     this.bedrockClient = new BedrockRuntimeClient({ region, profile });
-    this.defaultModelId = defaultModelId;
-    this.typeReasoning = typeReasoning;
   }
 
-  async initialize() {
-    try {
-      const jsonText = await Bun.file("./server-config.json").text();
-      const configs = JSON.parse(jsonText);
-      this.servers = configs as { [name: string]: ServerConfig };
-    } catch (e) {
-      typewriter.error("Failed to load server-config.json:", e);
-      throw new Error("server-config.json not found or invalid");
-    }
-    await this.connectToServers();
-  }
-
-  async connectToServers() {
-    try {
-      for (const serverName in this.servers) {
-        const mcp = new MCPClient(serverName);
-        const config = this.servers[serverName];
-        await mcp.connectToServer(config);
-        this.mcpClients.push(mcp);
-
-        const tools = await mcp.getTools();
-        const map: { [name: string]: MCPClient } = {};
-        tools.forEach((t) => (map[t.name] = mcp));
-        this.tools = [...this.tools, ...transformMCPToolsToBedrock(tools)];
-        this.toolsMap = {
-          ...this.toolsMap,
-          ...map,
-        };
-        typewriter.log(
-          `Connected to server ${serverName} with tools: ${tools.map(({ name }) => name)}`,
-        );
-      }
-    } catch (e) {
-      typewriter.error("Failed to connect to MCP server: ", e);
-      throw e;
-    }
-  }
-
-  async disconnect() {
-    for (const mcp of this.mcpClients) {
-      await mcp.disconnect();
-    }
-  }
-
-  private async executeMCPTool(toolName: string, input: any) {
-    try {
-      const mcpClient = this.toolsMap[toolName];
-      const result = await mcpClient.callTool(toolName, input);
-      return result;
-    } catch (error) {
-      typewriter.error(`Error executing MCP tool ${toolName}:`, error);
-      throw error;
-    }
+  transformToolsFn(tools: any[]): Tool[] {
+    return transformMCPToolsToBedrock(tools);
   }
 
   async handleToolConversation(
@@ -135,21 +72,14 @@ export class MCPBedrockIntegration {
       if (toolUses.length === 0) {
         typewriter.log(
           "Latency for final response in ms:",
-          response.metrics?.latencyMs || "N/A",
+          Number((performance.now() - startTime).toFixed(0)),
         );
         if (message.content && message.content.length > 0) {
-          typewriter.type(message.content[0].text + "\n");
+          typewriter.type(message.content[0].text, "\n");
         }
-        // No more tool calls, conversation is complete
         break;
       }
 
-      // toolUses.forEach((toolUse) =>
-      //   typewriter.log(
-      //     `Latency for tool '${toolUse.toolUse?.name || "N/A"}' in ms:`,
-      //     response.metrics?.latencyMs || "N/A",
-      //   ),
-      // );
       typewriter.log(
         "Latency for tool choice in ms:",
         Number((performance.now() - startTime).toFixed(0)),
@@ -229,6 +159,7 @@ export class MCPBedrockIntegration {
     });
 
     while (true) {
+      const startTime = performance.now();
       const command = new ConverseStreamCommand({
         modelId,
         messages: this.messages.all(),
@@ -239,7 +170,15 @@ export class MCPBedrockIntegration {
       if (!response.stream) break;
       let toolUse: ToolUseBlock = { toolUseId: "", name: "", input: "" };
       let text = "";
+      let firstChunk = true;
       for await (const chunk of response.stream) {
+        if (firstChunk) {
+          typewriter.log(
+            "Latency for bedrock invocation (stream start) in ms:",
+            Number((performance.now() - startTime).toFixed(0)),
+          );
+          firstChunk = false;
+        }
         if (chunk.contentBlockStart) {
           if (chunk.contentBlockStart?.start?.toolUse) {
             toolUse = {
@@ -264,26 +203,24 @@ export class MCPBedrockIntegration {
             typewriter.type("\n");
           }
         }
-        if (chunk.metadata) {
-          const latency = chunk.metadata.metrics?.latencyMs || "N/A";
-          if (toolUse.name) {
-            typewriter.log(
-              `Latency for tool '${toolUse.name}' in ms:`,
-              latency,
-            );
-          } else {
-            typewriter.log(`Latency for final response in ms:`, latency);
-          }
-        }
       }
 
       if (!toolUse || !toolUse.toolUseId || !toolUse.name || !toolUse.input) {
+        typewriter.log(
+          "Latency for final response (stream end) in ms:",
+          Number((performance.now() - startTime).toFixed(0)),
+        );
         break;
+      } else {
+        typewriter.log(
+          "Latency for tool choice (stream end) in ms:",
+          Number((performance.now() - startTime).toFixed(0)),
+        );
       }
 
       let parsedInput: any;
       if (typeof toolUse.input === "string") {
-        parsedInput = toolUse.input ? JSON.parse(toolUse.input) : {};
+        parsedInput = toolUse.input ? this.parseJsonSafely(toolUse.input) : {};
       } else {
         parsedInput = toolUse.input ?? {};
       }
@@ -309,16 +246,23 @@ export class MCPBedrockIntegration {
         }
         let parsedInput: any;
         if (typeof toolUse.input === "string") {
-          parsedInput = toolUse.input ? JSON.parse(toolUse.input) : {};
+          parsedInput = toolUse.input
+            ? this.parseJsonSafely(toolUse.input)
+            : {};
         } else {
           parsedInput = toolUse.input ?? {};
         }
+        const toolStartTime = performance.now();
         const result = await this.executeMCPTool(toolUse.name, parsedInput);
         try {
           typewriter.log("Result:", JSON.parse(result.content[0].text));
         } catch {
           typewriter.log("Result:", result.content[0].text);
         }
+        typewriter.log(
+          `Latency for tool invocation '${toolUse.name || "N/A"}' in ms:`,
+          Number((performance.now() - toolStartTime).toFixed(0)),
+        );
         toolResults.push({
           toolResult: {
             toolUseId: toolUse.toolUseId,

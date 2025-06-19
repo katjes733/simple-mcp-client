@@ -6,7 +6,7 @@ import {
 import { transformMCPToolsToBedrock } from "~/util/transformMCPTool";
 import type { Message } from "~/types/SimpleMcpClientTypes";
 import type { Tool, ToolUseBlock } from "@aws-sdk/client-bedrock-runtime";
-import { AbstractMCPIntegration } from "./AbstractIntegration";
+import { AbstractMCPIntegration } from "./AbstractMCPIntegration";
 
 const DEFAULT_MODEL_ID =
   "arn:aws:bedrock:us-east-1:275279264324:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0";

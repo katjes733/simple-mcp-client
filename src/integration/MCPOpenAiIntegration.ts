@@ -5,7 +5,7 @@ import type {
   ChatCompletionChunk,
 } from "openai/resources/chat/completions";
 import { transformMCPToolsToOpenAI } from "~/util/transformMCPTool";
-import { AbstractMCPIntegration } from "./AbstractIntegration";
+import { AbstractMCPIntegration } from "./AbstractMCPIntegration";
 
 const DEFAULT_MODEL_ID = "gpt-4o";
 
@@ -28,7 +28,7 @@ export class MCPOpenAiIntegration extends AbstractMCPIntegration<
     this.openai = new OpenAI({ apiKey: openaiApiKey });
   }
 
-  transformToolsFn(tools: any[]): OpenAI.Chat.Completions.ChatCompletionTool[] {
+  transformToolsFn(tools: any[]): ChatCompletionTool[] {
     return transformMCPToolsToOpenAI(tools);
   }
 

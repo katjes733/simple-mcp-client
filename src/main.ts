@@ -1,15 +1,24 @@
 import { MCPBedrockIntegration } from "./integration/MCPBedrockIntegration";
 import readline from "readline/promises";
 import { MCPOpenAiIntegration } from "./integration/MCPOpenAiIntegration";
+import { MCPGoogleAiIntegration } from "./integration/MCPGoogleAiIntegration";
+import type { IMCPIntegration } from "./types/IMCPIntegration";
 
 async function main() {
-  let integration: MCPBedrockIntegration | MCPOpenAiIntegration;
-  if (process.env.OPENAI_API_KEY) {
+  let integration: IMCPIntegration;
+  if (process.env.PROVIDER === "openai") {
     typewriter.log("Using OpenAI");
     integration = new MCPOpenAiIntegration();
-  } else {
+  } else if (process.env.PROVIDER === "google") {
+    typewriter.log("Using Google");
+    integration = new MCPGoogleAiIntegration();
+  } else if (process.env.PROVIDER === "aws") {
     typewriter.log("Using Bedrock");
     integration = new MCPBedrockIntegration();
+  } else {
+    throw new Error(
+      `Invalid Provider '${process.env.PROVIDER}'; must be one of: ['openai', 'google', 'aws']`,
+    );
   }
   await integration.initialize();
 

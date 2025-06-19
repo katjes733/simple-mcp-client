@@ -1,9 +1,12 @@
+import type { IMCPIntegration } from "~/types/IMCPIntegration";
 import type { ServerConfig } from "~/types/SimpleMcpClientTypes";
 import { CustomStringMap } from "~/util/CustomStringMap";
 import { LimitedSizeArray } from "~/util/LimitedSizeArray";
 import { MCPClient } from "~/util/MCPClient";
 
-export abstract class AbstractMCPIntegration<TTool, TMessage> {
+export abstract class AbstractMCPIntegration<TTool, TMessage>
+  implements IMCPIntegration
+{
   private mcpClients: MCPClient[] = [];
   private toolsMap = new CustomStringMap<MCPClient>();
   private servers: { [name: string]: ServerConfig } = {};
@@ -29,11 +32,14 @@ export abstract class AbstractMCPIntegration<TTool, TMessage> {
 
   /* eslint-disable no-unused-vars */
   abstract transformToolsFn(tools: any[]): TTool[];
-  abstract handleToolConversation(userMessage: string, modelId: string): void;
+  abstract handleToolConversation(
+    userMessage: string,
+    modelId: string,
+  ): Promise<TMessage[]>;
   abstract handleToolConversationStream(
     userMessage: string,
     modelId: string,
-  ): void;
+  ): Promise<TMessage[]>;
   /* eslint-enable no-unused-vars */
 
   async initialize() {
